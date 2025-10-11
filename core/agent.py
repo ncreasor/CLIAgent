@@ -4,6 +4,7 @@ Agent module - Core AI agent with tool use capabilities (Ollama version)
 
 import json
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import ollama
@@ -167,24 +168,37 @@ For multi-step tasks (like git push), run ALL steps and quote each result."""
 
                 # Accumulate response from stream chunks
                 full_content = ""
+                displayed_length = 0
                 tool_calls = None
 
                 for chunk in stream:
                     chunk_msg = chunk.get('message', {})
 
-                    # Accumulate content and print it token by token
+                    # Accumulate content
                     if 'content' in chunk_msg:
                         content_piece = chunk_msg['content']
                         if content_piece:
-                            # Clear "Думаю..." on first token
-                            if not full_content:
-                                print("\r" + " " * 50 + "\r", end="", flush=True)
-                            print(content_piece, end="", flush=True)
                             full_content += content_piece
+
+                            # Filter out <think> blocks and display new content
+                            cleaned = re.sub(r'<think>.*?</think>', '', full_content, flags=re.DOTALL)
+
+                            # Print only the new part (not already displayed)
+                            if len(cleaned) > displayed_length:
+                                new_text = cleaned[displayed_length:]
+                                if displayed_length == 0:
+                                    # First output - clear "Думаю..."
+                                    print("\r" + " " * 50 + "\r", end="", flush=True)
+                                print(new_text, end="", flush=True)
+                                displayed_length = len(cleaned)
 
                     # Check for tool calls (usually in last chunk)
                     if 'tool_calls' in chunk_msg and chunk_msg['tool_calls']:
                         tool_calls = chunk_msg['tool_calls']
+
+                # Final cleanup - remove any remaining incomplete <think> tags
+                full_content = re.sub(r'<think>.*?</think>', '', full_content, flags=re.DOTALL)
+                full_content = re.sub(r'<think>.*', '', full_content, flags=re.DOTALL)  # Incomplete at end
 
                 # Reconstruct response in old format
                 response = {
