@@ -4,7 +4,7 @@ AutoCLI launcher script
 Quick start: python run.py
 """
 import os
-os.environ["OLLAMA_NO_GPU"] = "true"
+os.environ.pop("OLLAMA_NO_GPU", None)
 
 if __name__ == "__main__":
     from core.cli import main

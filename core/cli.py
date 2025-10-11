@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from core.agent_react import ReactAgent as Agent
+from core.agent_simple import SimpleAgent as Agent
 
 
 class AutoCLI:
