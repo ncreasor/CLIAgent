@@ -131,7 +131,7 @@ After EACH command, quote its output before proceeding."""
 
     def _call_ollama_with_tools_streaming(self) -> dict:
         """Call Ollama API with tool use support - streaming mode (shows progress)"""
-        max_iterations = 30
+        max_iterations = 10  # Prevent infinite loops
         iteration = 0
 
         # Prepend system prompt to messages
@@ -208,9 +208,15 @@ After EACH command, quote its output before proceeding."""
             print("\rВыполняю... ", end="", flush=True)
             tool_results = self._process_tool_calls(tool_calls)
 
-            # Add results to history but don't print them (too verbose)
+            # Add results to history AND show them to prevent hallucinations
             print("\r" + " " * 50 + "\r", end="", flush=True)
             for tool_result in tool_results:
+                # Show tool result immediately
+                result_preview = tool_result['content'][:300]
+                if len(tool_result['content']) > 300:
+                    result_preview += "..."
+                print(f"[Результат: {result_preview}]", flush=True)
+
                 self.conversation_history.append(tool_result)
                 self.logger.info(f"Tool result added: {tool_result['content'][:100]}...")
 
@@ -244,7 +250,7 @@ After EACH command, quote its output before proceeding."""
 
     def _call_ollama_with_tools(self) -> dict:
         """Call Ollama API with tool use support"""
-        max_iterations = 30
+        max_iterations = 10  # Prevent infinite loops
         iteration = 0
 
         # Prepend system prompt to messages
