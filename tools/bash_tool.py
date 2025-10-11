@@ -14,21 +14,26 @@ class BashTool:
         self.logger = logging.getLogger('BashTool')
 
     def get_schema(self) -> Dict[str, Any]:
-        """Get tool schema for Claude API"""
+        """Get tool schema for Ollama API"""
         return {
             "name": "bash",
-            "description": "Execute bash commands on the system. Use this to run scripts, check files, install packages, etc.",
+            "description": """Execute shell commands. Run any command line tool.
+Examples:
+- List files: {"command": "ls -la"}
+- Check Python: {"command": "python --version"}
+- Install package: {"command": "pip install requests"}
+- Run script: {"command": "python script.py"}
+Timeout: 30 seconds default.""",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "The bash command to execute"
+                        "description": "Shell command to run. Single command string like 'ls -la' or 'python test.py'"
                     },
                     "timeout": {
                         "type": "integer",
-                        "description": "Timeout in seconds (default: 30)",
-                        "default": 30
+                        "description": "Maximum seconds to wait before timeout. Default: 30"
                     }
                 },
                 "required": ["command"]

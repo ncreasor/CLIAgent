@@ -50,20 +50,26 @@ class AutoCLI:
             level=getattr(logging, log_level),
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
+                logging.FileHandler(log_file)
+                # Removed StreamHandler - logs only to file now
             ]
         )
+
+        # Suppress noisy loggers
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('ollama').setLevel(logging.WARNING)
+
         self.logger = logging.getLogger('AutoCLI')
 
     def print_banner(self):
         """Print welcome banner"""
-        banner = """
-╔═══════════════════════════════════════════╗
-║         AutoCLI v0.1.0                   ║
-║    Self-improving AI Agent               ║
-║    Powered by Claude Sonnet 4.5          ║
-╚═══════════════════════════════════════════╝
+        model_name = self.config.get('model', 'qwen2.5-coder:14b')
+        banner = f"""
++-------------------------------------------+
+|         AutoCLI v0.1.0                    |
+|    Self-improving AI Agent                |
+|    Powered by Ollama ({model_name})       |
++-------------------------------------------+
 
 Type 'help' for commands, 'exit' to quit
 Type anything else to chat with the agent
@@ -126,7 +132,8 @@ Available commands:
 
                 # Process user input through agent
                 response = self.agent.process(user_input)
-                print(f"\n{response}")
+                if response:  # Only print if not empty (streaming mode prints directly)
+                    print(f"\n{response}")
 
             except KeyboardInterrupt:
                 print("\n\nInterrupted. Type 'exit' to quit.")

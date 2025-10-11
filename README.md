@@ -2,7 +2,7 @@
 
 **Самоулучшающийся AI-агент с возможностью модификации собственного кода**
 
-AutoCLI - это интеллектуальный CLI-инструмент, построенный на основе Claude Sonnet 4.5, который может выполнять команды, работать с файлами и самостоятельно улучшать свой код.
+AutoCLI - это интеллектуальный CLI-инструмент, построенный на основе Ollama (локальные LLM модели), который может выполнять команды, работать с файлами и самостоятельно улучшать свой код.
 
 ## Ключевые возможности
 
@@ -20,7 +20,7 @@ autocli/
 ├── core/
 │   ├── __init__.py
 │   ├── cli.py          # Основной CLI интерфейс
-│   └── agent.py        # Агентная система с Claude API
+│   └── agent.py        # Агентная система с Ollama API
 ├── tools/
 │   ├── __init__.py
 │   ├── bash_tool.py    # Инструмент для выполнения команд
@@ -36,16 +36,28 @@ autocli/
 
 ## Установка
 
-1. Установите зависимости:
+1. Установите Ollama:
+```bash
+# Скачайте с https://ollama.com/download
+```
+
+2. Скачайте модель:
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+3. Установите Python зависимости:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Проверьте конфигурацию в `config/config.json`:
+4. Проверьте конфигурацию в `config/config.json`:
 ```json
 {
-  "api_key": "your-api-key-here",
-  "model": "claude-sonnet-4-5-20250929",
+  "ollama_host": "http://localhost:11434",
+  "model": "qwen2.5-coder:7b",
+  "max_tokens": 4096,
+  "temperature": 0.7,
   "self_improvement": {
     "enabled": true,
     "auto_improve_on_error": true
@@ -53,7 +65,7 @@ pip install -r requirements.txt
 }
 ```
 
-3. Запустите AutoCLI:
+5. Запустите AutoCLI:
 ```bash
 python core/cli.py
 ```
@@ -130,9 +142,9 @@ python -m core.cli
 
 ```json
 {
-  "api_key": "your-anthropic-api-key",
-  "model": "claude-sonnet-4-5-20250929",
-  "max_tokens": 8192,
+  "ollama_host": "http://localhost:11434",
+  "model": "qwen2.5-coder:7b",
+  "max_tokens": 4096,
   "temperature": 0.7,
   "self_improvement": {
     "enabled": true,
@@ -147,6 +159,12 @@ python -m core.cli
   }
 }
 ```
+
+### Рекомендуемые модели:
+- **qwen2.5-coder:7b** - лучшая для кодинга (~4.7 GB)
+- **llama3.1:8b** - универсальная (~4.7 GB)
+- **qwen2.5:7b** - быстрая (~4.7 GB)
+- **mistral:7b** - легкая (~4.1 GB)
 
 ## Безопасность
 
@@ -203,7 +221,13 @@ MIT License
 
 ## Контакты
 
-Проект создан как демонстрация возможностей самоулучшающихся AI-агентов на базе Claude.
+Проект создан как демонстрация возможностей самоулучшающихся AI-агентов на базе локальных LLM через Ollama.
+
+### Преимущества Ollama:
+- ✅ **Бесплатно** - никаких API ключей
+- ✅ **Приватно** - всё работает локально
+- ✅ **Оффлайн** - не нужен интернет
+- ✅ **Быстро** - низкая задержка
 
 ---
 

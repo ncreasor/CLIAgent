@@ -18,29 +18,36 @@ class SelfModifyTool:
         self.project_root = Path(__file__).parent.parent
 
     def get_schema(self) -> Dict[str, Any]:
-        """Get tool schema for Claude API"""
+        """Get tool schema for Ollama API"""
         return {
             "name": "self_modify",
-            "description": "Modify the agent's own code. Use this to fix bugs, add features, or improve performance. ALWAYS create backups before modifying.",
+            "description": """Modify the agent's own code. Available actions:
+- list_files: List all modifiable files in the project
+- backup: Create a backup of the project
+- diff: Preview changes before modifying
+- modify_file: Actually modify a file (auto-creates backup)
+
+IMPORTANT: Always use 'list_files' first to see available files!
+Example file paths: 'core/agent.py', 'tools/bash_tool.py', 'config/config.json'""",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
                         "enum": ["backup", "modify_file", "list_files", "diff"],
-                        "description": "The self-modification action to perform"
+                        "description": "Action: 'list_files' (list files), 'backup' (create backup), 'diff' (preview), or 'modify_file' (make changes)"
                     },
                     "file_path": {
                         "type": "string",
-                        "description": "Relative path to the file (from project root)"
+                        "description": "Relative path from project root. Examples: 'core/agent.py', 'tools/bash_tool.py', 'README.md'. Required for: modify_file, diff"
                     },
                     "new_content": {
                         "type": "string",
-                        "description": "New content for the file (for modify_file action)"
+                        "description": "Complete new file content. Must be full valid Python/JSON/text file. Required for: modify_file, diff"
                     },
                     "backup_name": {
                         "type": "string",
-                        "description": "Name for the backup (optional, auto-generated if not provided)"
+                        "description": "Optional backup name (auto-generated if omitted)"
                     }
                 },
                 "required": ["action"]

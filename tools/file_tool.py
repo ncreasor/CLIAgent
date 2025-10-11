@@ -15,25 +15,29 @@ class FileTool:
         self.logger = logging.getLogger('FileTool')
 
     def get_schema(self) -> Dict[str, Any]:
-        """Get tool schema for Claude API"""
+        """Get tool schema for Ollama API"""
         return {
             "name": "file",
-            "description": "Read, write, edit, or delete files. Supports multiple operations.",
+            "description": """File operations: read, write, append, delete, list, exists.
+Examples:
+- Read: {"operation": "read", "path": "config/config.json"}
+- Write: {"operation": "write", "path": "test.txt", "content": "Hello World"}
+- List dir: {"operation": "list", "path": "."}""",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "operation": {
                         "type": "string",
                         "enum": ["read", "write", "append", "delete", "list", "exists"],
-                        "description": "The file operation to perform"
+                        "description": "Operation: read (read file), write (create/overwrite), append (add to end), delete (remove file), list (list directory), exists (check if exists)"
                     },
                     "path": {
                         "type": "string",
-                        "description": "The file or directory path"
+                        "description": "File or directory path. Can be relative (./file.txt) or absolute (/path/to/file)"
                     },
                     "content": {
                         "type": "string",
-                        "description": "Content to write or append (for write/append operations)"
+                        "description": "File content for write/append operations. Full text to write to file."
                     }
                 },
                 "required": ["operation", "path"]

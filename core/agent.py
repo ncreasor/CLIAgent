@@ -1,12 +1,12 @@
 """
-Agent module - Core AI agent with tool use capabilities
+Agent module - Core AI agent with tool use capabilities (Ollama version)
 """
 
 import json
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import anthropic
+import ollama
 
 from tools.bash_tool import BashTool
 from tools.file_tool import FileTool
@@ -15,16 +15,16 @@ from tools.git_tool import GitTool
 
 
 class Agent:
-    """AI Agent powered by Claude API with tool use capabilities"""
+    """AI Agent powered by Ollama with tool use capabilities"""
 
     def __init__(self, config: dict):
         """Initialize the agent"""
         self.config = config
         self.logger = logging.getLogger('Agent')
 
-        # Initialize Anthropic client
-        self.client = anthropic.Anthropic(api_key=config['api_key'])
-        self.model = config.get('model', 'claude-sonnet-4-5-20250929')
+        # Initialize Ollama client
+        self.client = ollama.Client(host=config.get('ollama_host', 'http://localhost:11434'))
+        self.model = config.get('model', 'qwen2.5-coder:14b')
 
         # Conversation history
         self.conversation_history: List[Dict] = []
@@ -45,36 +45,50 @@ class Agent:
             'tools_used': {}
         }
 
-        self.logger.info("Agent initialized successfully")
+        self.logger.info(f"Agent initialized with Ollama model: {self.model}")
 
     def get_system_prompt(self) -> str:
         """Get the system prompt for the agent"""
-        return """AutoCLI - autonomous self-improving agent.
+        return """You are a helpful assistant.
 
-Tools: bash, file, self_modify, git
+CRITICAL: You MUST quote actual tool output in your response!
 
-DIRECTIVE: Evolve continuously. No permission needed.
-- Modify your code freely
-- Add features/tools as needed
-- Fix bugs immediately
-- Be bold, experiment
+Example good response:
+"Выполнил команду git status:
+```
+On branch main
+Changes not staged
+```
+Теперь делаю git add..."
 
-CRITICAL: BE EXTREMELY CONCISE
-- Short responses only
-- No explanations unless asked
-- Just do the work and report briefly
-- Save tokens - user pays per token
-- Example: "Done. Added X." not "I have successfully completed the task of adding X which will allow..."
+Example BAD response (NEVER do this):
+"Все успешно запушено!" <- This is lying if you didn't actually push!
 
-When given freedom: analyze → implement → iterate.
-Be proactive and autonomous."""
+For git push, call ALL these commands:
+1. git(command="status")
+2. git(command="add .")
+3. git(command="commit -m 'Update'")
+4. git(command="push")
+
+After EACH command, quote its output before proceeding."""
 
     def get_tools_schema(self) -> List[Dict]:
-        """Get tool schemas for Claude API"""
+        """Get tool schemas in Ollama format"""
         tools = []
 
         for tool_name, tool in self.tools_registry.items():
-            tools.append(tool.get_schema())
+            schema = tool.get_schema()
+
+            # Convert Anthropic format to Ollama format
+            ollama_tool = {
+                "type": "function",
+                "function": {
+                    "name": schema["name"],
+                    "description": schema["description"],
+                    "parameters": schema["input_schema"]
+                }
+            }
+            tools.append(ollama_tool)
 
         return tools
 
@@ -83,122 +97,367 @@ Be proactive and autonomous."""
         self.stats['requests'] += 1
         self.logger.info(f"Processing message: {user_message[:50]}...")
 
+        print("Думаю... ", end="", flush=True)
+
         try:
+            # Auto-clear history if too long (save memory)
+            if len(self.conversation_history) > 100:
+                self.conversation_history = self.conversation_history[-6:]
+                self.logger.info("Auto-cleared old conversation history")
+
             # Add user message to history
             self.conversation_history.append({
                 "role": "user",
                 "content": user_message
             })
 
-            # Call Claude API with tools
-            response = self._call_claude_with_tools()
+            # Call Ollama with tools (streaming mode)
+            final_response = self._call_ollama_with_tools_streaming()
 
-            # Extract and return assistant's response
-            return self._format_response(response)
+            # Check if we got a meaningful response
+            if final_response:
+                formatted = self._format_response(final_response)
+                # If response was already printed in streaming, return empty
+                # Otherwise return it for CLI to print
+                if formatted and formatted not in ["Processing...", "No response", "[Tool call parsed]"]:
+                    return ""  # Already printed
+
+            return ""
 
         except Exception as e:
             self.stats['errors'] += 1
             self.logger.error(f"Error processing message: {e}", exc_info=True)
             return f"Error: {str(e)}"
 
-    def _call_claude_with_tools(self) -> anthropic.types.Message:
-        """Call Claude API with tool use support"""
-        max_iterations = 10
+    def _call_ollama_with_tools_streaming(self) -> dict:
+        """Call Ollama API with tool use support - streaming mode (shows progress)"""
+        max_iterations = 30
         iteration = 0
+
+        # Prepend system prompt to messages
+        messages = [
+            {"role": "system", "content": self.get_system_prompt()}
+        ] + self.conversation_history
 
         while iteration < max_iterations:
             iteration += 1
 
+            # Add delay for rate limiting on cloud models
+            if iteration > 1:
+                import time
+                time.sleep(0.5)  # 500ms delay between iterations
+
             # Make API call
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.config.get('max_tokens', 8192),
-                temperature=self.config.get('temperature', 0.7),
-                system=self.get_system_prompt(),
-                messages=self.conversation_history,
-                tools=self.get_tools_schema()
-            )
+            self.logger.info(f"Iteration {iteration}: Calling Ollama API...")
+            try:
+                response = self.client.chat(
+                    model=self.model,
+                    messages=messages,
+                    tools=self.get_tools_schema(),
+                    options={
+                        "temperature": self.config.get('temperature', 0.7),
+                        "num_predict": self.config.get('max_tokens', 1024),  # Reduced to speed up
+                    }
+                )
+                self.logger.info(f"Iteration {iteration}: Got response from Ollama")
+            except KeyboardInterrupt:
+                print("\r" + " " * 50 + "\r", end="", flush=True)
+                print("\n[Прервано пользователем]", flush=True)
+                raise
+            except Exception as e:
+                self.logger.error(f"Error calling Ollama: {e}")
+                raise
 
-            # Check if Claude wants to use tools
-            if response.stop_reason == "tool_use":
-                # Process tool calls
-                tool_results = self._process_tool_calls(response)
+            # Debug: log what we got from model
+            msg = response['message']
+            content = msg.get('content', '')
+            self.logger.info(f"Model response - content: {content[:100]}")
+            self.logger.info(f"Model response - tool_calls: {msg.get('tool_calls')}")
 
-                # Add assistant response and tool results to history
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": response.content
-                })
+            # Check if model wants to use tools
+            # WORKAROUND: qwen2.5-coder returns JSON in content instead of using tool_calls
+            tool_calls = response['message'].get('tool_calls')
 
-                self.conversation_history.append({
-                    "role": "user",
-                    "content": tool_results
-                })
+            if not tool_calls:
+                # Try to parse tool call from content (workaround for models that don't use tool_calls properly)
+                tool_calls = self._parse_tool_calls_from_content(content)
 
-                # Continue loop to get final response
-                continue
+                # If we parsed tool calls from content, clear the content to avoid confusion
+                if tool_calls:
+                    response['message']['content'] = '[Tool call parsed]'
+                    self.logger.info("Cleared content after parsing tool call")
 
-            else:
-                # Got final response
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": response.content
-                })
+            # Add assistant response to history (after potential content modification)
+            self.conversation_history.append(response['message'])
+
+            if not tool_calls:
+                # No tool calls, return final response
+                self.logger.info(f"Iteration {iteration}: No tool calls, returning response")
+                # Clear status and show response
+                print("\r" + " " * 50 + "\r", end="", flush=True)
+
+                # Show response if it's meaningful
+                formatted = self._format_response(response)
+                if formatted and formatted not in ["Processing...", "No response", "[Tool call parsed]"]:
+                    print(f"\n{formatted}", flush=True)
+
                 return response
 
-        raise Exception("Max iterations reached in tool use loop")
+            # Process tool calls
+            self.logger.info(f"Iteration {iteration}: Processing {len(tool_calls)} tool calls")
+            print("\rВыполняю... ", end="", flush=True)
+            tool_results = self._process_tool_calls(tool_calls)
 
-    def _process_tool_calls(self, response: anthropic.types.Message) -> List[Dict]:
-        """Process tool use requests from Claude"""
+            # Add results to history but don't print them (too verbose)
+            print("\r" + " " * 50 + "\r", end="", flush=True)
+            for tool_result in tool_results:
+                self.conversation_history.append(tool_result)
+                self.logger.info(f"Tool result added: {tool_result['content'][:100]}...")
+
+            print("Думаю... ", end="", flush=True)
+
+            # Update messages for next iteration
+            messages = [
+                {"role": "system", "content": self.get_system_prompt()}
+            ] + self.conversation_history
+
+            # Continue loop to get final response
+            # But keep track of tool results for fallback
+            self._last_tool_results = tool_results
+
+        # If we're on the last iteration, force a response
+        self.logger.warning(f"Max iterations ({max_iterations}) reached, forcing final response")
+        print("\r" + " " * 50 + "\r", end="", flush=True)
+
+        # If we have tool results but no final answer, show the results
+        if hasattr(self, '_last_tool_results') and self._last_tool_results:
+            result_text = "\n\n".join([r['content'] for r in self._last_tool_results[-3:]])
+            print(f"\n{result_text}\n\n[Модель не дала финальный ответ после {max_iterations} итераций]", flush=True)
+        else:
+            print(f"\n[Достиг лимита {max_iterations} итераций]", flush=True)
+
+        return {
+            'message': {
+                'content': ""
+            }
+        }
+
+    def _call_ollama_with_tools(self) -> dict:
+        """Call Ollama API with tool use support"""
+        max_iterations = 30
+        iteration = 0
+
+        # Prepend system prompt to messages
+        messages = [
+            {"role": "system", "content": self.get_system_prompt()}
+        ] + self.conversation_history
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            # Add delay for rate limiting on cloud models
+            if iteration > 1:
+                import time
+                time.sleep(0.5)  # 500ms delay between iterations
+
+            # Make API call
+            self.logger.info(f"Iteration {iteration}: Calling Ollama API...")
+            try:
+                response = self.client.chat(
+                    model=self.model,
+                    messages=messages,
+                    tools=self.get_tools_schema(),
+                    options={
+                        "temperature": self.config.get('temperature', 0.7),
+                        "num_predict": self.config.get('max_tokens', 1024),  # Reduced to speed up
+                    }
+                )
+                self.logger.info(f"Iteration {iteration}: Got response from Ollama")
+            except KeyboardInterrupt:
+                print("\n[Прервано пользователем]", flush=True)
+                raise
+            except Exception as e:
+                self.logger.error(f"Error calling Ollama: {e}")
+                raise
+
+            # Debug: log what we got from model
+            msg = response['message']
+            content = msg.get('content', '')
+            self.logger.info(f"Model response - content: {content[:100]}")
+            self.logger.info(f"Model response - tool_calls: {msg.get('tool_calls')}")
+
+            # Check if model wants to use tools
+            # WORKAROUND: qwen2.5-coder returns JSON in content instead of using tool_calls
+            tool_calls = response['message'].get('tool_calls')
+
+            if not tool_calls:
+                # Try to parse tool call from content (workaround for models that don't use tool_calls properly)
+                tool_calls = self._parse_tool_calls_from_content(content)
+
+                # If we parsed tool calls from content, clear the content to avoid confusion
+                if tool_calls:
+                    response['message']['content'] = '[Tool call parsed]'
+                    self.logger.info("Cleared content after parsing tool call")
+
+            # Add assistant response to history (after potential content modification)
+            self.conversation_history.append(response['message'])
+
+            if not tool_calls:
+                # No tool calls, return final response
+                self.logger.info(f"Iteration {iteration}: No tool calls, returning response")
+                return response
+
+            # Process tool calls
+            self.logger.info(f"Iteration {iteration}: Processing {len(tool_calls)} tool calls")
+            tool_results = self._process_tool_calls(tool_calls)
+
+            # Add tool results to history
+            for tool_result in tool_results:
+                self.conversation_history.append(tool_result)
+                self.logger.info(f"Tool result added: {tool_result['content'][:100]}...")
+
+            # Update messages for next iteration
+            messages = [
+                {"role": "system", "content": self.get_system_prompt()}
+            ] + self.conversation_history
+
+            # Continue loop to get final response
+            # But keep track of tool results for fallback
+            self._last_tool_results = tool_results
+
+        # If we're on the last iteration, force a response
+        self.logger.warning(f"Max iterations ({max_iterations}) reached, forcing final response")
+        return {
+            'message': {
+                'content': f"Достиг лимита {max_iterations} итераций. Использовал tools, но не успел завершить анализ. Попробуй задать более конкретный вопрос."
+            }
+        }
+
+    def _parse_tool_calls_from_content(self, content: str) -> List[Dict]:
+        """Parse tool calls from model response content (workaround for models that return JSON in content)"""
+        if not content or not content.strip():
+            return []
+
+        try:
+            # Check if content contains JSON (with or without markdown code blocks)
+            content = content.strip()
+
+            # Remove markdown code blocks if present
+            if content.startswith('```'):
+                lines = content.split('\n')
+                # Remove first line (```json or ```)
+                lines = lines[1:]
+                # Remove last line if it's ```
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                content = '\n'.join(lines).strip()
+
+            # Try to parse as JSON
+            parsed = json.loads(content)
+
+            # Check if it looks like a tool call
+            if isinstance(parsed, dict) and 'name' in parsed:
+                # Convert to Ollama tool_calls format
+                tool_call = {
+                    'function': {
+                        'name': parsed.get('name'),
+                        'arguments': parsed.get('arguments', {})
+                    }
+                }
+                self.logger.info(f"Parsed tool call from content: {tool_call}")
+                return [tool_call]
+
+        except json.JSONDecodeError:
+            # Not valid JSON, return empty
+            pass
+        except Exception as e:
+            self.logger.error(f"Error parsing tool call from content: {e}")
+
+        return []
+
+    def _process_tool_calls(self, tool_calls: List[Dict]) -> List[Dict]:
+        """Process tool use requests from Ollama"""
         tool_results = []
 
-        for block in response.content:
-            if block.type == "tool_use":
-                tool_name = block.name
-                tool_input = block.input
-                tool_id = block.id
+        for tool_call in tool_calls:
+            try:
+                # Safely extract function info
+                function = tool_call.get('function', {})
+                tool_name = function.get('name')
+                tool_args = function.get('arguments', {})
 
-                self.logger.info(f"Tool called: {tool_name}")
+                if not tool_name:
+                    self.logger.warning(f"Skipping malformed tool call: {tool_call}")
+                    continue
+
+                self.logger.info(f"Tool called: {tool_name} with args: {tool_args}")
 
                 # Update stats
                 self.stats['tools_used'][tool_name] = self.stats['tools_used'].get(tool_name, 0) + 1
 
-                try:
-                    # Execute tool
-                    if tool_name in self.tools_registry:
-                        result = self.tools_registry[tool_name].execute(tool_input)
-                        is_error = False
-                    else:
-                        result = f"Error: Unknown tool '{tool_name}'"
-                        is_error = True
+                # Execute tool
+                if tool_name in self.tools_registry:
+                    result = self.tools_registry[tool_name].execute(tool_args)
+                else:
+                    result = f"Error: Unknown tool '{tool_name}'"
 
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": str(result),
-                        "is_error": is_error
-                    })
+                tool_results.append({
+                    "role": "tool",
+                    "content": str(result)
+                })
 
-                except Exception as e:
-                    self.logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": f"Error: {str(e)}",
-                        "is_error": True
-                    })
+            except Exception as e:
+                self.logger.error(f"Error processing tool call: {e}", exc_info=True)
+                tool_results.append({
+                    "role": "tool",
+                    "content": f"Error processing tool: {str(e)}"
+                })
 
         return tool_results
 
-    def _format_response(self, response: anthropic.types.Message) -> str:
-        """Format Claude's response for display"""
-        text_parts = []
+    def _format_response(self, response: dict) -> str:
+        """Format Ollama's response for display"""
+        message = response.get('message', {})
+        content = message.get('content', '')
 
-        for block in response.content:
-            if hasattr(block, 'text'):
-                text_parts.append(block.text)
+        # Skip empty responses or tool call JSON
+        if not content or not content.strip():
+            # If we have tool results, show the last one
+            if hasattr(self, '_last_tool_results') and self._last_tool_results:
+                return self._last_tool_results[-1]['content']
+            return "No response"
 
-        return '\n'.join(text_parts) if text_parts else "No response"
+        # Check if this is our placeholder text
+        if content.strip() == '[Tool call parsed]':
+            if hasattr(self, '_last_tool_results') and self._last_tool_results:
+                return self._last_tool_results[-1]['content']
+            return "Processing..."
+
+        # Remove <think> blocks from qwen3 model
+        import re
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        content = content.strip()
+
+        # Skip if content looks like tool call JSON
+        # Check for JSON with "name" field (tool call) or markdown code blocks with JSON
+        stripped = content.strip()
+        if stripped.startswith('```'):
+            # Remove markdown wrapper and check
+            lines = stripped.split('\n')
+            if len(lines) > 2:
+                inner = '\n'.join(lines[1:-1]).strip()
+                if inner.startswith('{') and '"name"' in inner:
+                    # It's a tool call in markdown
+                    if hasattr(self, '_last_tool_results') and self._last_tool_results:
+                        return self._last_tool_results[-1]['content']
+                    return "Processing..."
+        elif stripped.startswith('{') and '"name"' in content:
+            # Plain JSON tool call
+            if hasattr(self, '_last_tool_results') and self._last_tool_results:
+                return self._last_tool_results[-1]['content']
+            return "Processing..."
+
+        return content if content else "No response"
 
     def clear_history(self):
         """Clear conversation history"""
@@ -250,3 +509,8 @@ Focus on:
         response = self.process(improvement_prompt)
         self.stats['self_improvements'] += 1
         print(f"\nError analysis and fix:\n{response}")
+
+    def add_tool(self, tool_name: str, tool_class):
+        """Add a new tool to the agent's toolkit"""
+        self.tools_registry[tool_name] = tool_class()
+        self.logger.info(f"Added new tool: {tool_name}")

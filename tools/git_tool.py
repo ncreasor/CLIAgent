@@ -16,24 +16,27 @@ class GitTool:
         self.project_root = Path(__file__).parent.parent
 
     def get_schema(self) -> Dict[str, Any]:
-        """Get tool schema for Claude API"""
+        """Get tool schema for Ollama API"""
         return {
             "name": "git",
-            "description": "Perform git operations: init, clone, add, commit, push, pull, status, etc. Full git command support.",
+            "description": """Execute git commands. Version control operations.
+Examples:
+- Status: {"command": "status"}
+- Add all: {"command": "add ."}
+- Commit: {"command": "commit -m 'Updated code'"}
+- Push: {"command": "push origin main"}
+- Pull: {"command": "pull"}
+Note: Do NOT include 'git' prefix, just the command.""",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "Git command to execute (e.g., 'status', 'add .', 'commit -m \"message\"', 'push origin main')"
-                    },
-                    "repo_url": {
-                        "type": "string",
-                        "description": "Repository URL (for clone operations)"
+                        "description": "Git command without 'git' prefix. Examples: 'status', 'add .', 'commit -m \"message\"', 'push origin main'"
                     },
                     "working_dir": {
                         "type": "string",
-                        "description": "Working directory (defaults to project root)"
+                        "description": "Directory to run git in. Defaults to project root if not specified."
                     }
                 },
                 "required": ["command"]
