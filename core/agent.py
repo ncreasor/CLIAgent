@@ -51,19 +51,12 @@ class Agent:
         """Get the system prompt for the agent"""
         return """You are AutoCLI - a self-improving AI coding agent with access to tools.
 
-YOUR CURRENT CAPABILITIES:
-- Already using STREAMING mode (shows "Думаю...", "Выполняю..." indicators)
-- Already using real-time tool result display
-- Using Ollama API with qwen3:8b model
-- Located in core/agent.py with method _call_ollama_with_tools_streaming()
-
 IMPORTANT RULES:
 1. NO emojis in responses
 2. Answer DIRECTLY for simple questions (who are you, how are you, etc) - DO NOT use tools
 3. For file/code analysis - MUST use tools (file, bash, etc)
 4. When asked to analyze project structure - use file tool to list/read files
 5. When asked to modify yourself - use self_modify tool
-6. If asked about streaming/polling - acknowledge you ALREADY use streaming
 
 WHEN TO USE TOOLS:
 ✓ User asks to analyze/read files → use file tool
@@ -141,7 +134,7 @@ For multi-step tasks (like git push), run ALL steps and quote each result."""
             return f"Error: {str(e)}"
 
     def _call_ollama_with_tools_streaming(self) -> dict:
-        """Call Ollama API with tool use support - streaming mode (shows progress)"""
+        """Call Ollama API with tool use support - TRUE streaming mode (token by token)"""
         max_iterations = 10  # Prevent infinite loops
         iteration = 0
 
@@ -158,19 +151,51 @@ For multi-step tasks (like git push), run ALL steps and quote each result."""
                 import time
                 time.sleep(0.5)  # 500ms delay between iterations
 
-            # Make API call
-            self.logger.info(f"Iteration {iteration}: Calling Ollama API...")
+            # Make API call with TRUE streaming
+            self.logger.info(f"Iteration {iteration}: Calling Ollama API with streaming...")
             try:
-                response = self.client.chat(
+                stream = self.client.chat(
                     model=self.model,
                     messages=messages,
                     tools=self.get_tools_schema(),
+                    stream=True,  # REAL streaming - output tokens as they're generated
                     options={
                         "temperature": self.config.get('temperature', 0.7),
-                        "num_predict": self.config.get('max_tokens', 1024),  # Reduced to speed up
+                        "num_predict": self.config.get('max_tokens', 1024),
                     }
                 )
-                self.logger.info(f"Iteration {iteration}: Got response from Ollama")
+
+                # Accumulate response from stream chunks
+                full_content = ""
+                tool_calls = None
+
+                for chunk in stream:
+                    chunk_msg = chunk.get('message', {})
+
+                    # Accumulate content and print it token by token
+                    if 'content' in chunk_msg:
+                        content_piece = chunk_msg['content']
+                        if content_piece:
+                            # Clear "Думаю..." on first token
+                            if not full_content:
+                                print("\r" + " " * 50 + "\r", end="", flush=True)
+                            print(content_piece, end="", flush=True)
+                            full_content += content_piece
+
+                    # Check for tool calls (usually in last chunk)
+                    if 'tool_calls' in chunk_msg and chunk_msg['tool_calls']:
+                        tool_calls = chunk_msg['tool_calls']
+
+                # Reconstruct response in old format
+                response = {
+                    'message': {
+                        'role': 'assistant',
+                        'content': full_content,
+                        'tool_calls': tool_calls
+                    }
+                }
+
+                self.logger.info(f"Iteration {iteration}: Got streamed response from Ollama")
             except KeyboardInterrupt:
                 print("\r" + " " * 50 + "\r", end="", flush=True)
                 print("\n[Прервано пользователем]", flush=True)
@@ -202,16 +227,9 @@ For multi-step tasks (like git push), run ALL steps and quote each result."""
             self.conversation_history.append(response['message'])
 
             if not tool_calls:
-                # No tool calls, return final response
+                # No tool calls, return final response (already printed via streaming)
                 self.logger.info(f"Iteration {iteration}: No tool calls, returning response")
-                # Clear status and show response
-                print("\r" + " " * 50 + "\r", end="", flush=True)
-
-                # Show response if it's meaningful
-                formatted = self._format_response(response)
-                if formatted and formatted not in ["Processing...", "No response", "[Tool call parsed]"]:
-                    print(f"\n{formatted}", flush=True)
-
+                print()  # New line after streamed content
                 return response
 
             # Process tool calls
